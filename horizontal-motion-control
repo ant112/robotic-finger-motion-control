@@ -1,0 +1,582 @@
+using System;
+using System.Windows.Forms;
+using System.ComponentModel;
+using System.Collections.Generic;
+using System.Data;
+using System.Drawing;
+using System.IO.Ports;
+using EposCmd.Net;
+using EposCmd.Net.DeviceCmdSet.Operation;
+
+
+namespace Demo_EposCmd
+{
+
+
+    public partial class Form1 : Form
+    {
+        private DeviceManager _mConnector;
+        private Device _mEpos;
+        private SerialPort serialport;
+        private Int32 x, y, z;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="Form1"/> class.
+        /// </summary>
+        public Form1()
+        {
+            InitializeComponent();
+            serialport = new SerialPort();
+            serialport.BaudRate = 9600;
+            serialport.Parity = Parity.None;
+            serialport.StopBits = StopBits.One;
+            serialport.DataBits = 8;
+            serialport.Handshake = Handshake.None;
+            serialport.RtsEnable = true;
+            serialport.PortName = "COM8";
+        }
+
+        /// <summary>
+        /// Handles the Click event of the button1 control.
+        /// </summary>
+        /// <param name="sender">The source of the event.</param>
+        /// <param name="e">The <see cref="System.EventArgs"/> instance containing the event data.</param>
+        private void button1_Click(object sender, EventArgs e)
+        {
+            if (_mConnector != null)
+            {
+                /*                    
+                 * Important notice:
+                 * It's recommended to call the Dispose function before application close 
+                 */
+                _mConnector.Dispose();
+            }
+
+            Close();
+        }
+
+        /// <summary>
+        /// Handles the Click event of the buttonSettings control.
+        /// </summary>
+        /// <param name="sender">The source of the event.</param>
+        /// <param name="ea">The <see cref="System.EventArgs"/> instance containing the event data.</param>
+        private void buttonSettings_Click(object sender, EventArgs ea)
+        {
+            try
+            {
+                _mConnector = new DeviceManager();
+
+                //get baudrate info
+                uint b = _mConnector.Baudrate;
+
+                //set connection properties
+                _mConnector.Baudrate = b; 
+                _mConnector.Timeout = 500;
+
+                buttonEnable.Enabled = true;
+            }
+            catch (DeviceException e)
+            {
+                StopRefresh();
+                ShowMessageBox(e.ErrorMessage, e.ErrorCode);
+            }
+            catch(Exception e)
+            {
+                StopRefresh();
+
+                MessageBox.Show(e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Handles the Click event of the buttonEnable control.
+        /// </summary>
+        /// <param name="sender">The source of the event.</param>
+        /// <param name="ea">The <see cref="System.EventArgs"/> instance containing the event data.</param>
+        private int gain = 0;
+        private void buttonEnable_Click(object sender, EventArgs ea)
+        {
+            try
+            {
+            //    _mEpos = _mConnector.CreateDevice(Convert.ToUInt16(textBoxNodeId.Text));
+
+              //  textBoxAOM.Text = _mEpos.Operation.OperationMode.GetOperationModeAsString();
+
+                StateMachine sm = _mEpos.Operation.StateMachine;
+
+                if (sm.GetFaultState())
+                    sm.ClearFault();
+
+                sm.SetEnableState();
+
+                buttonSettings.Enabled = false;
+                buttonEnable.Enabled = false;
+                buttonDisable.Enabled = true;
+                buttonMove.Enabled = true;
+                buttonHalt.Enabled = true;
+                
+                timer1.Enabled = false;
+                timer2.Enabled = false;
+
+                gain = Math.Abs(horizontal_MAX - horizontal_MIN) / (analog2_MAX-analog2_MIN);
+            }
+            catch (DeviceException e)
+            {
+                StopRefresh();
+                ShowMessageBox(e.ErrorMessage, e.ErrorCode);
+            }
+            catch(Exception e)
+            {
+                StopRefresh();
+
+                MessageBox.Show(e.Message);
+            }
+        }
+
+   
+
+        /// <summary>
+        /// Handles the Click event of the buttonDisable control.
+        /// </summary>
+        /// <param name="sender">The source of the event.</param>
+        /// <param name="ea">The <see cref="System.EventArgs"/> instance containing the event data.</param>
+        private void buttonDisable_Click(object sender, EventArgs ea)
+        {
+            try
+            {
+                StateMachine sm = _mEpos.Operation.StateMachine;
+
+                if (sm.GetFaultState())
+                    sm.ClearFault();
+                
+                if (!sm.GetDisableState())
+                    sm.SetDisableState();
+
+                buttonSettings.Enabled = true;
+                buttonEnable.Enabled = true;
+                buttonDisable.Enabled = false;
+                buttonMove.Enabled = false;
+                buttonHalt.Enabled = false;
+            }
+            catch (DeviceException e)
+            {
+                StopRefresh();
+                ShowMessageBox(e.ErrorMessage, e.ErrorCode);
+            }
+            catch( Exception e)
+            {
+                StopRefresh();
+
+                MessageBox.Show(e.Message);
+            }
+        }
+
+        private float SetVelocity; //qc per second
+        private Int32 PositionNow;
+        private Int32 TargetPosition;
+        private UInt32 SetVelocityrpm;
+        private Int32 GoToPosition;
+        /// <summary>
+        /// Handles the Click event of the buttonMove control.
+        /// </summary>
+        /// <param name="sender">The source of the event.</param>
+        /// <param name="ea">The <see cref="System.EventArgs"/> instance containing the event data.</param>
+        private void buttonMove_Click(object sender, EventArgs ea)
+        {
+            try
+            {
+                timer1.Enabled = true;
+                timer2.Enabled = false;
+                textBox_calibrationIndicator.Text = "OFF";
+            }
+            catch (DeviceException e)
+            {
+                StopRefresh();
+                ShowMessageBox(e.ErrorMessage, e.ErrorCode);
+            }
+            catch (Exception e)
+            {
+                StopRefresh();
+
+                MessageBox.Show(e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Handles the Click event of the buttonHalt control.
+        /// </summary>
+        /// <param name="sender">The source of the event.</param>
+        /// <param name="ea">The <see cref="System.EventArgs"/> instance containing the event data.</param>
+        private void buttonHalt_Click(object sender, EventArgs ea)
+        {
+            try
+            {
+                ProfilePositionMode ppm = _mEpos.Operation.ProfilePositionMode;
+
+                ppm.ActivateProfilePositionMode();
+
+                textBoxAOM.Text = _mEpos.Operation.OperationMode.GetOperationModeAsString();
+
+                ppm.HaltPositionMovement();
+            }
+            catch (DeviceException e)
+            {
+                StopRefresh();
+                ShowMessageBox(e.ErrorMessage, e.ErrorCode);
+            }
+            catch (Exception e)
+            {
+                StopRefresh();
+
+                MessageBox.Show(e.Message);
+            }
+        }
+        
+        /// <summary>
+        /// Stops the refresh.
+        /// </summary>
+        private void StopRefresh()
+        {
+            try
+            {
+                timer1.Enabled  = false;
+                timer2.Enabled = false;
+                serialport.Close();
+                if( _mEpos != null ) _mEpos = null;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Handles the Load event of the Form1 control.
+        /// </summary>
+        /// <param name="sender">The source of the event.</param>
+        /// <param name="e">The <see cref="System.EventArgs"/> instance containing the event data.</param>
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            radioButtonAbsoluteMove.Checked = true;
+            timer1.Interval = 10;
+            timer1.Enabled = false;
+
+            timer2.Interval = 1;
+            timer2.Enabled = false;
+        }
+   
+        private void ReadAccelerometer()
+        {
+            try
+            {
+               // textBox2.Text = "On";
+                Int32.TryParse(serialport.ReadLine(), out x);
+                System.Threading.Thread.Sleep(1);
+                Int32.TryParse(serialport.ReadLine(), out y);
+                System.Threading.Thread.Sleep(1);
+                Int32.TryParse(serialport.ReadLine(), out z);
+                System.Threading.Thread.Sleep(10);
+                textBoxX.Text = x.ToString();
+                textBoxY.Text = y.ToString();
+                textBoxZ.Text = z.ToString();
+
+            }
+            catch (Exception ee)
+            {
+              //  textBox2.Text = "Off";
+                StopRefresh();
+                MessageBox.Show(ee.Message);
+            }
+        }
+
+        private ushort AnalogData = 0;
+        private ushort AnalogData2 = 0;
+        private int[] analogArray;
+
+        private int horizontal_MAX = -1;
+        private int horizontal_MIN = -1;
+        private int vertical_MAX = -1;
+        private int vertical_MIN = -1;
+        private ushort analog2_MAX = 0;
+        private ushort analog2_MIN = 0;
+
+        private void button_analogMIN_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (_mEpos != null)
+                {
+                    _mEpos.Operation.Io.GetAnalogInput(2, ref analog2_MIN);
+                }
+            }
+            catch (DeviceException ea)
+            {
+                StopRefresh();
+                ShowMessageBox(ea.ErrorMessage, ea.ErrorCode);
+            }
+            catch (Exception ea)
+            {
+                StopRefresh();
+
+                MessageBox.Show(ea.Message);
+            }
+        }
+
+        private void button_analogMAX_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (_mEpos != null)
+                {
+                    _mEpos.Operation.Io.GetAnalogInput(2, ref analog2_MAX);
+                }
+            }
+            catch (DeviceException ea)
+            {
+                StopRefresh();
+                ShowMessageBox(ea.ErrorMessage, ea.ErrorCode);
+            }
+            catch (Exception ea)
+            {
+                StopRefresh();
+
+                MessageBox.Show(ea.Message);
+            }
+        }
+
+        private void button_horizontalMAX_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (_mEpos != null)
+                {
+                    horizontal_MAX = _mEpos.Operation.MotionInfo.GetPositionIs();
+                }
+            }
+            catch (DeviceException ea)
+            {
+                StopRefresh();
+                ShowMessageBox(ea.ErrorMessage, ea.ErrorCode);
+            }
+            catch (Exception ea)
+            {
+                StopRefresh();
+
+                MessageBox.Show(ea.Message);
+            }
+        }
+
+        private void button_horizontalMIN_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (_mEpos != null)
+                {
+                    horizontal_MIN = _mEpos.Operation.MotionInfo.GetPositionIs();
+                }
+            }
+            catch (DeviceException ea)
+            {
+                StopRefresh();
+                ShowMessageBox(ea.ErrorMessage, ea.ErrorCode);
+            }
+            catch (Exception ea)
+            {
+                StopRefresh();
+
+                MessageBox.Show(ea.Message);
+            }
+        }
+
+
+        private void button_calibrationON_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                _mEpos = _mConnector.CreateDevice(Convert.ToUInt16(textBoxNodeId.Text));
+
+                textBoxAOM.Text = _mEpos.Operation.OperationMode.GetOperationModeAsString();
+
+                StateMachine sm = _mEpos.Operation.StateMachine;
+
+                if (sm.GetFaultState())
+                    sm.ClearFault();
+
+                timer2.Enabled = true;
+                textBox_calibrationIndicator.Text = "ON";
+            }
+            catch (Exception ee)
+            {
+                StopRefresh();
+                MessageBox.Show(ee.Message);
+            }
+        }
+
+        private void timer2_Tick(object sender, EventArgs e)
+        {
+            try
+            {
+                /////////////////////////////// HORIZONTAL MOTION CALIBRATION ////////////////////////
+                if (horizontal_MAX == -1)
+                {
+                    textBox_horizontalMax.Text = Convert.ToString(_mEpos.Operation.MotionInfo.GetPositionIs());
+                }
+                else if (horizontal_MAX != -1)
+                {
+                    textBox_horizontalMax.Text = Convert.ToString(horizontal_MAX);
+                }
+
+                if (horizontal_MIN == -1)
+                {
+                    textBox_horizontalMin.Text = Convert.ToString(_mEpos.Operation.MotionInfo.GetPositionIs());
+                }
+                else if (horizontal_MIN != -1)
+                {
+                    textBox_horizontalMin.Text = Convert.ToString(horizontal_MIN);
+                }
+
+                _mEpos.Operation.Io.GetAnalogInput(2, ref AnalogData2);
+                if(analog2_MAX==0)
+                {
+                    textBox_analogMax.Text = Convert.ToString(AnalogData2);
+                }
+                else if(analog2_MAX != 0)
+                {
+                    textBox_analogMax.Text = Convert.ToString(analog2_MAX);
+                }
+
+                if(analog2_MIN == 0)
+                {
+                    textBox_analogMin.Text = Convert.ToString(AnalogData2);
+                }
+                else if(analog2_MIN != 0)
+                {
+                    textBox_analogMin.Text = Convert.ToString(analog2_MIN);
+                }
+
+            }
+            catch (DeviceException ee)
+            {
+                StopRefresh();
+                ShowMessageBox(ee.ErrorMessage, ee.ErrorCode);
+            }
+            catch (Exception ee)
+            {
+                StopRefresh();
+
+                MessageBox.Show(ee.Message);
+            }
+        }
+
+
+        /// <summary>
+        /// Handles the Tick event of the timer1 control.
+        /// </summary>
+        /// <param name="sender">The source of the event.</param>
+        /// <param name="ea">The <see cref="System.EventArgs"/> instance containing the event data.</param>
+        private void timer1_Tick(object sender, EventArgs ea)
+        {
+            analogArray = new int[20];
+            try
+            {
+                
+                if (_mEpos != null)
+                {
+
+                    textBox_horizontalMax.Text = Convert.ToString(horizontal_MAX);
+                    textBox_horizontalMin.Text = Convert.ToString(horizontal_MIN);
+                    textBoxPositionActualValue.Text = String.Format("{0}", _mEpos.Operation.MotionInfo.GetPositionIs());
+                    _mEpos.Operation.Io.GetAnalogInput(1, ref AnalogData);
+
+                    _mEpos.Operation.Io.GetAnalogInput(2, ref AnalogData2);
+
+                    textBox1.Text = Convert.ToString(AnalogData);
+                    textBox2.Text = Convert.ToString(AnalogData2);
+                    GoToPosition = (int) horizontal_MAX - ((AnalogData2 - analog2_MIN)*gain);
+
+                    if(GoToPosition< horizontal_MIN)
+                    {
+                        GoToPosition = horizontal_MIN;
+                    }
+
+                    if (GoToPosition > horizontal_MAX)
+                    {
+                        GoToPosition = horizontal_MAX;
+                    }
+                    
+
+                    ProfilePositionMode ppm = _mEpos.Operation.ProfilePositionMode;
+
+                    ppm.ActivateProfilePositionMode();
+
+                    textBoxAOM.Text = _mEpos.Operation.OperationMode.GetOperationModeAsString();
+
+                    textBoxPositionStart.Text = String.Format("{0}", GoToPosition);
+
+                    PositionNow = _mEpos.Operation.MotionInfo.GetPositionIs();
+                    
+                    SetVelocity = (float)(Math.Abs(GoToPosition - PositionNow) * 4);
+                    SetVelocityrpm = Convert.ToUInt32(SetVelocity * 3);
+
+                    if (SetVelocityrpm < 100)
+                    {
+                        SetVelocityrpm = 100;
+                    }
+
+                    if (SetVelocityrpm > 11000)
+                    {
+                        SetVelocityrpm = 11000;
+                    }
+
+                    textBoxSetVelocity.Text = String.Format("{0}", SetVelocityrpm);
+                   // textBoxTargetPosition.Text = String.Format("{0}", GoToPosition);
+
+                    ppm.SetPositionProfile(SetVelocityrpm, 37000, 37000);
+                    ppm.MoveToPosition(GoToPosition, 
+                                       true,
+                                       true);
+
+                    if ( _mEpos.Operation.StateMachine.GetEnableState() )
+                    {
+                        buttonSettings.Enabled = false;
+                        buttonEnable.Enabled = false;
+                        buttonDisable.Enabled = true;
+                        buttonMove.Enabled = true;
+                        buttonHalt.Enabled = true;
+                    }
+                    else
+                    {
+                        buttonSettings.Enabled = true;
+                        buttonEnable.Enabled = true;
+                        buttonDisable.Enabled = false;
+                        buttonMove.Enabled = false;
+                        buttonHalt.Enabled = false;
+                    }
+                }
+            }
+            catch (DeviceException e)
+            {
+                StopRefresh();
+                ShowMessageBox(e.ErrorMessage, e.ErrorCode);
+            }
+            catch (Exception e)
+            {
+                StopRefresh();
+
+                MessageBox.Show(e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Shows Error Message
+        /// </summary>
+        private void ShowMessageBox(string text, uint errorCode)
+        {
+            string msg;
+
+            msg = String.Format("{0}\nErrorCode: {1:X8}", text, errorCode);
+            MessageBox.Show(msg, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+
+    }
+}
